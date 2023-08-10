@@ -1,0 +1,2825 @@
+######### Spondylodiscitis EANS Propensity - by Santhosh G. Thavarajasingam (Imperial Brain & Spine)  ##########
+
+
+# Import necessary libraries
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(openxlsx)
+
+
+
+#Ok next I will tell you which columns to combine, these are binary, she reason I combine them is its the same bacterium, so needs to stay if combined 1 if both are 1 -> (Tissue_Staphylococcus aureus & 	Tissue_Staph aureus & Tissue_staph auerus & Tissue_Staphylokokkus aureus & "Tissue_Staphylococcus epidermidis + Staphylococcus aureus" & "Tissue_Staphylococcus aureus und Streptococcus agalacticae"), (Tissue_Staphylococcus epidermidis & Tissue_Staph epidermidis & Tissue_Staph epi + "Tissue_Staphylococcus epidermidis + Staphylococcus aureus"),  (
+
+# Read the Excel file
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+# Count the number of rows with Surgical_Tx = 1
+count_surgical_tx <- sum(Propensity_Excel$Surgical_Tx == 1, na.rm = TRUE)
+
+# Count the number of rows with Conservative_Tx = 1
+count_conservative_tx <- sum(Propensity_Excel$Conservative_Tx == 1, na.rm = TRUE)
+
+# Print the counts
+print(paste("Number of rows with Surgical_Tx = 1:", count_surgical_tx))
+print(paste("Number of rows with Conservative_Tx = 1:", count_conservative_tx))
+
+# Define a mapping from the numeric code to the string value
+location_mapping <- c("1" = "cervical_loc", 
+                      "2" = "thoracic_loc", 
+                      "3" = "thoracolumbar_loc_T11_L2", 
+                      "4" = "lumb_loc", 
+                      "5" = "lumbosac_loc", 
+                      "6" = "multiple_loc")
+
+# Recode the "Location" column
+Propensity_Excel_NEW <- Propensity_Excel %>%
+  mutate(Location = as.character(Location)) %>%
+  mutate(Location_recode = recode(Location, !!!location_mapping)) %>%
+  pivot_wider(names_from = Location_recode, values_from = Location_recode, 
+              names_prefix = "Location_", values_fill = 0, values_fn = length) %>%
+  mutate(across(starts_with("Location_"), ~replace_na(., 0))) %>%
+  mutate(across(starts_with("Location_"), as.integer))
+
+# Cleaning the "Tissue_culture_X" column and creating dummy variables
+Propensity_Excel_NEW <- Propensity_Excel %>%
+  mutate(Tissue_culture_X = str_trim(Tissue_culture_X)) %>%
+  filter(Tissue_culture_X != "1" & Tissue_culture_X != "0") %>%
+  separate_rows(Tissue_culture_X, sep = "[;,]") %>%
+  mutate(Tissue_culture_X = str_trim(Tissue_culture_X)) %>%
+  mutate(Tissue_culture_X = as.factor(Tissue_culture_X)) %>%
+  pivot_wider(names_from = Tissue_culture_X, values_from = Tissue_culture_X, 
+              names_prefix = "Tissue_", values_fill = 0, values_fn = length) %>%
+  mutate(across(starts_with("Tissue_"), ~replace_na(., 0))) %>%
+  mutate(across(starts_with("Tissue_"), as.integer))
+
+# Check the changes
+head(Propensity_Excel_NEW)
+colnames(Propensity_Excel_NEW)
+
+# Create a new file path
+new_file_path <- paste0("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_NEW.xlsx")
+
+# Write the data to the new Excel file
+write.xlsx(Propensity_Excel_NEW,new_file_path)
+
+
+
+
+
+####### NLP (Natural language processing) approach --> I USED THIS
+
+# Import necessary libraries
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(text)
+library(textTinyR)
+
+# Import necessary libraries
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(stringdist)
+install.packages("stringdist")
+library(purrr)
+install.packages("fuzzyjoin")
+library("fuzzyjoin")
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(fuzzyjoin)
+library(mice)
+library(MatchIt)
+install.packages("MatchIt")
+library(openxlsx)
+
+
+# Read the Excel file
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx") #latest one from Johnny
+
+# Define a dictionary of bacteria names
+bacteria_dict <- c("Staphylococcus hominis", "Staphylococcus warneri", "E.coli", "Escherichia coli", "Streptococcus gordonii",
+                   "Staphylococcus aureus", "Enterococcus faecalis", "Staphylococcus Haemolyticus", "Proteus mirabilis", 
+                   "Staphylococcus epidermidis", "Citrobacter koseri", "Streptococcus intermedius", "Staphylococcus lugdunensis", 
+                   "Streptococcus pyogenes", "Pseudomonas aeruginosa", "Propionibacterium acnes", "Streptococcus dysgalactiae", 
+                   "Streptococcus anginosus", "Streptococcus parasanguinis", "Streptococcus gallolyticus", "Cutibacterium acnes", 
+                   "Streptococcus sanguinis", "Klebsiella oxycota", "Corynebacterium species", "Streptococcus agalacticae", 
+                   "Streptococcus mitis", "Enterobacter cloacae", "Cutibacterium granulosum", "Klebsiella oxytoca", "Anaerococcus murdochii", 
+                   "Parvimonas micra", "Alloiococcus otitis", "Finegoldia magna", "Enterococcus faecium", "Eikenella corrodens", 
+                   "Prevotella melaninogenica", "Raoultella planticola", "Raoultella ornithinolytica", "Micrococcus luteus", 
+                   "Fusobacterium nucleatum", "Streptococcus salivarius", "Streptococcus infantis", "Streptococcus oralis", 
+                   "Rothia mucilaginosa", "Staphylococcus capitis", "Kocuria varians", "Streptococcus pneumoniae", "MRSA", 
+                   "Streptococcus agalactiae", "Clostridium perfringens", "Granulacutella adiacens", "Mycobacterium tuberculosis", 
+                   "Salmonella enterica Hadar", "Serratia marcescens", "Staph aureus", "Staph epidermidis", "staph aureus", "E coli", 
+                   "E faecalis", "Enterococccus faecalis", "stapg dysgalactie une mitis", "staph epi", "Cutibact ances", "Staphylokokkus aureus", 
+                   "e faecalis", "staph aureus", "Cutibacterium  acnes", "E Coli", "E. cloacae und E. faecium (VRE)", "Eikenella corrodens und Parvimonas micra", 
+                   "Staph.aureus", "Staph epi+Parvimonas micra", "Streptokokkus viridans", "Streptokokken Gruppe B", "Cutibact ances", 
+                   "Cutibacterium (Propionibacterium) acnes", "Staph. epidermidis", "Streptokokkus sanguinis", "Pseudomonas aeroginosa", 
+                   "Staphylococcus hämolyticus", "Streptococcus constellatus", "Staphylococcus haemolyticus.", "Streptococcus anginosus + E coli", 
+                   "Staphylokokkus epidermidis", "Pseudomonas aeruginosa + Citrobacter koseri", "MSSA", "Proprionibacterium acnes", "Streptococcus Parasanguinis", 
+                   "E. Coli", "Streptococcus angi0sus", "Streptococcus Pneumoniae", "Staphylococcus  capitis", "E.coli", "Streptococcus pneumonia", "E. coli", 
+                   "Strep gallolyticus", "BStreptokokken", "Corynebakterien", "Tissue_Streptococcus dysgalactiae)", "Staphylococcus epidermidis + Staphylococcus aureus", 
+                   "Enterococcus faecalis +Cutibact acnes", "Staph capitis + warneri")
+
+
+# Recode the "Location" column
+Propensity_Excel <- Propensity_Excel %>%
+  mutate(Location = as.character(Location)) %>%
+  mutate(Location_recode = recode(Location, "1" = "cervical_loc", 
+                                  "2" = "thoracic_loc", 
+                                  "3" = "thoracolumbar_loc_T11_L2", 
+                                  "4" = "lumb_loc", 
+                                  "5" = "lumbosac_loc", 
+                                  "6" = "multiple_loc")) %>%
+  pivot_wider(names_from = Location_recode, values_from = Location_recode, 
+              names_prefix = "Location_", values_fill = 0, values_fn = length) %>%
+  mutate(across(starts_with("Location_"), ~replace_na(., 0))) %>%
+  mutate(across(starts_with("Location_"), as.integer))
+
+# Separate the bacteria in Tissue_culture_X column by ";" and ","
+Propensity_Excel <- Propensity_Excel %>%
+  separate_rows(Tissue_culture_X, sep = "[;,]") %>%
+  mutate(Tissue_culture_X = str_trim(Tissue_culture_X))
+
+# Remove the entries "0" and "1" in Tissue_culture_X column
+Propensity_Excel <- Propensity_Excel %>%
+  filter(!Tissue_culture_X %in% c("0", "1"))
+
+# Convert the tissue names to a data frame
+tissue_df <- data.frame(name = unique(Propensity_Excel$Tissue_culture_X), stringsAsFactors = FALSE)
+
+# Convert the bacteria dictionary to a data frame
+bacteria_df <- data.frame(name = bacteria_dict, stringsAsFactors = FALSE)
+
+# Use fuzzy matching to find the closest match in the dictionary
+matches <- fuzzyjoin::stringdist_inner_join(tissue_df, bacteria_df, by = "name")
+
+# Create a mapping from the tissue names to the closest bacteria names
+mapping <- setNames(matches$name.y, matches$name.x)
+
+# Apply the mapping to the separated data
+Propensity_Excel <- Propensity_Excel %>%
+  mutate(Tissue_culture_X = map(Tissue_culture_X, ~mapping[.])) %>%
+  pivot_wider(names_from = Tissue_culture_X, values_from = Tissue_culture_X, 
+              names_prefix = "Tissue_", values_fill = 0, values_fn = length) %>%
+  mutate(across(starts_with("Tissue_"), ~replace_na(., 0))) %>%
+  mutate(across(starts_with("Tissue_"), as.integer))
+
+# Check the changes
+head(Propensity_Excel)
+colnames(Propensity_Excel)
+
+# Create a new file path
+new_file_path <- paste0("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_NEWNLP.xlsx")
+
+# Write the data to the new Excel file
+write.xlsx(Propensity_Excel, new_file_path)
+
+
+
+
+##CHECK IF CORRECT
+
+
+Spondylodiscitis_original <- read_excel("OneDrive/Spondylodiscitis Propensity/Spondylodiscitis_original.xlsx")
+
+Spondylodiscitis_original$Relapse_yes
+table(Spondylodiscitis_original$Relapse_yes, Spondylodiscitis_original$Surgical_Tx)
+
+
+check_NLP_groupings <- function(original_df, transformed_df) {
+  # Preprocess the original dataframe
+  original_df <- original_df %>%
+    separate_rows(Tissue_culture_X, sep = "[;,]") %>%
+    mutate(Tissue_culture_X = str_trim(Tissue_culture_X)) %>%
+    filter(!Tissue_culture_X %in% c("0", "1"))
+  
+  # Merge the original and transformed dataframes on common columns
+  merged_df <- full_join(original_df, transformed_df, by = colnames(original_df))
+  
+  # Check if the bacteria name in the original dataframe doesn't match the mapped name in the transformed dataframe
+  discrepancies <- merged_df %>%
+    mutate(discrepancy = ifelse(Tissue_culture_X.x != Tissue_culture_X.y, TRUE, FALSE))
+  
+  # Count the number of discrepancies
+  discrepancy_count <- sum(discrepancies$discrepancy)
+  
+  # Identify which bacteria or columns are wrong
+  wrong_bacteria <- discrepancies %>%
+    filter(discrepancy == TRUE) %>%
+    pull(Tissue_culture_X.x) %>%
+    unique()
+  
+  list(discrepancy_count = discrepancy_count, wrong_bacteria = wrong_bacteria)
+}
+
+
+result <- check_NLP_groupings(Spondylodiscitis_original, Propensity_Excel)
+print(paste0("Number of discrepancies: ", result$discrepancy_count))
+print("Names of incorrectly matched bacteria:")
+print(result$wrong_bacteria)
+
+
+################
+
+
+
+
+
+
+
+# PROPENSITY MATCHING
+
+
+# Read the Excel file
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx") 
+
+
+
+# Replace spaces in column names with underscores
+colnames(Propensity_Excel) <- gsub(" ", "_", colnames(Propensity_Excel))
+
+
+# Identify binary variables
+binary_cols <- c("Surgical_Tx", "Conservative_Tx", "Death", "Relapse_yes", "Neuro_def_at_dc",
+                 "Epidural", "Paravertebral", "Osteo", "Disc", "Facet",
+                 "Stenosis", "Neuro_deficit", "Motor_deficit", "Bladder_dysf", "SIRS",
+                 "Fever", "Pain", "cRF", "Diabetes", "IV_druguse", "Immunosuppression",
+                 "Malignoma", "Liver_failure", "Tissue_culture_taken", "Tissue_culture_positive",
+                 "Location_lumb_loc", "Location_thoracic_loc", "Location_thoracolumbar_loc_T11_L2",
+                 "Location_multiple_loc", "Location_cervical_loc", "Location_lumbosac_loc",
+                 "Tissue_escherichia_coli", "Tissue_staphylococcus_aureus", "Tissue_proteus",
+                 "Tissue_staphylococcus_epidermis", "Tissue_pseudomonas_aeruginosa",
+                 "Tissue_propionibacterium_acnes", "Tissue_citrobacter", "Tissue_klebsiella",
+                 "Tissue_parvimonas_micra", "Tissue_alloiococcus", "Tissue_prevotella",
+                 "Tissue_eikenella_corrodens", "Tissue_streptococcus", "Tissue_raoultella",
+                 "Tissue_micrococcus", "Tissue_fusobacterium", "Tissue_corynebacterium",
+                 "Tissue_kocuria", "Tissue_serratia", "Tissue_clostridium")
+
+# Convert binary variables to factors
+Propensity_Excel[binary_cols] <- lapply(Propensity_Excel[binary_cols], factor)
+
+# Select only numeric columns which are not binary
+numeric_columns <- sapply(Propensity_Excel, is.numeric) & !(colnames(Propensity_Excel) %in% binary_cols)
+
+# Scale numeric columns
+Propensity_Excel[numeric_columns] <- scale(Propensity_Excel[numeric_columns])
+
+
+# Define a function for mode
+getmode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# Apply the function for each column based on its type
+# Function to impute missing values based on column type
+# Function to impute missing values based on column type
+impute_missing <- function(x) {
+  if (is.numeric(x)) {
+    ifelse(is.na(x), mean(x, na.rm = TRUE), x)
+  } else if (is.factor(x)) {
+    ifelse(is.na(x), getmode(x), x)
+  } else if (is.character(x)) {
+    x <- ifelse(grepl("\\d{2}/\\d{2}/\\d{4}", x), as.Date(x, format = "%d/%m/%Y"), x) # Convert string to Date if it matches the pattern
+    ifelse(is.na(x), "Unknown", x)
+  } else if (inherits(x, "Date")) {
+    ifelse(is.na(x), as.Date("1970-01-01"), x)
+  } else {
+    x
+  }
+}
+
+Propensity_Excel$Date_of_birth <- as.character(Propensity_Excel$Date_of_birth)
+Propensity_Excel$Date_admission <- as.character(Propensity_Excel$Date_admission)
+Propensity_Excel$Date_discharge <- as.character(Propensity_Excel$Date_discharge)
+
+
+# Apply imputation function to all columns in the data frame
+Propensity_Excel <- Propensity_Excel %>%
+  mutate(across(everything(), impute_missing))
+
+# Check for NA values after imputation
+anyNA(Propensity_Excel)
+
+# Convert binary variables to factors
+Propensity_Excel[binary_cols] <- lapply(Propensity_Excel[binary_cols], function(x) factor(x, labels = c("0", "1")))
+
+
+# Perform matching on complete cases
+matched_data <- matchit(formula = as.formula("Surgical_Tx ~ ."), data = Propensity_Excel, method = "nearest", distance = "logit", replace = FALSE)
+
+
+
+#print summary
+summary(matched_data)
+
+
+# Extract the matched data
+Propensity_Excel_Matched <- match.data(matched_data)
+
+
+# Create a new file path
+new_file_path1 <- paste0("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_Matched.xlsx")
+
+# Write the data to the new Excel file
+write.xlsx(Propensity_Excel_Matched,new_file_path1)
+
+
+
+
+
+# Perform logistic regression
+logit_model <- glm(Surgical_Tx ~ ., data = matched_df, family = "binomial")
+summary(logit_model)
+
+
+# Check balance
+library(cobalt)
+install.packages("cobalt")
+love.plot(matched_data, threshold = .1)
+
+
+
+
+
+
+###### try 2
+
+library(readxl)
+library(dplyr)
+library(Matching)
+
+# Read the Excel file
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx") 
+
+# Replace spaces in column names with underscores
+colnames(Propensity_Excel) <- gsub(" ", "_", colnames(Propensity_Excel))
+
+# Identify binary variables
+binary_cols <- c("Surgical_Tx", "Conservative_Tx", "Death", "Relapse_yes", "Neuro_def_at_dc",
+                 "Epidural", "Paravertebral", "Osteo", "Disc", "Facet",
+                 "Stenosis", "Neuro_deficit", "Motor_deficit", "Bladder_dysf", "SIRS",
+                 "Fever", "Pain", "cRF", "Diabetes", "IV_druguse", "Immunosuppression",
+                 "Malignoma", "Liver_failure", "Tissue_culture_taken", "Tissue_culture_positive",
+                 "Location_lumb_loc", "Location_thoracic_loc", "Location_thoracolumbar_loc_T11_L2",
+                 "Location_multiple_loc", "Location_cervical_loc", "Location_lumbosac_loc",
+                 "Tissue_escherichia_coli", "Tissue_staphylococcus_aureus", "Tissue_proteus",
+                 "Tissue_staphylococcus_epidermis", "Tissue_pseudomonas_aeruginosa",
+                 "Tissue_propionibacterium_acnes", "Tissue_citrobacter", "Tissue_klebsiella",
+                 "Tissue_parvimonas_micra", "Tissue_alloiococcus", "Tissue_prevotella",
+                 "Tissue_eikenella_corrodens", "Tissue_streptococcus", "Tissue_raoultella",
+                 "Tissue_micrococcus", "Tissue_fusobacterium", "Tissue_corynebacterium",
+                 "Tissue_kocuria", "Tissue_serratia", "Tissue_clostridium")
+
+# Convert binary variables to factors
+Propensity_Excel[binary_cols] <- lapply(Propensity_Excel[binary_cols], function(x) {
+  ifelse(is.na(x), "0", ifelse(x == 0, "0", "1"))
+})
+
+
+# Define a function for mode
+getmode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# Apply the function for each column based on its type
+impute_missing <- function(x) {
+  if (is.numeric(x)) {
+    ifelse(is.na(x), mean(x, na.rm = TRUE), x)
+  } else if (is.factor(x)) {
+    ifelse(is.na(x), getmode(x), x)
+  } else if (is.character(x)) {
+    x <- ifelse(grepl("\\d{2}/\\d{2}/\\d{4}", x), as.Date(x, format = "%d/%m/%Y"), x) # Convert string to Date if it matches the pattern
+    ifelse(is.na(x), "Unknown", x)
+  } else if (inherits(x, "Date")) {
+    ifelse(is.na(x), as.Date("1970-01-01"), x)
+  } else {
+    x
+  }
+}
+
+Propensity_Excel$Date_of_birth <- as.character(Propensity_Excel$Date_of_birth)
+Propensity_Excel$Date_admission <- as.character(Propensity_Excel$Date_admission)
+Propensity_Excel$Date_discharge <- as.character(Propensity_Excel$Date_discharge)
+
+# Apply imputation function to all columns in the data frame
+Propensity_Excel <- Propensity_Excel %>%
+  mutate(across(everything(), impute_missing))
+
+# Check for NA values after imputation
+anyNA(Propensity_Excel)
+
+# Convert binary variables to factors
+Propensity_Excel[binary_cols] <- lapply(Propensity_Excel[binary_cols], factor)
+
+# Perform matching on complete cases
+matched_data <- matchit(formula = as.formula("Surgical_Tx ~ ."), data = Propensity_Excel, method = "nearest", distance = "logit", replace = FALSE)
+
+# Print summary
+summary(matched_data)
+
+Propensity_Excel_Matched2 <- match.data(matched_data)
+
+logistic_model <- glm(Surgical_Tx ~ ., data = Propensity_Excel_Matched2, family = binomial, maxit = 1000)
+
+
+# Create a new file path
+new_file_path1 <- paste0("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_Matched2.xlsx")
+
+# Write the data to the new Excel file
+write.xlsx(Propensity_Excel_Matched2,new_file_path1)
+
+
+
+
+
+
+
+#############statistical analysis
+
+
+# Read the Excel file
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx") 
+
+# Replace spaces in column names with underscores
+colnames(Propensity_Excel) <- gsub(" ", "_", colnames(Propensity_Excel))
+
+
+
+predictor_cols <- c("Surgical_Tx", "Conservative_Tx", "Death", "Relapse_yes", "Neuro_def_at_dc",
+                 "Epidural", "Paravertebral", "Osteo", "Disc", "Facet",
+                 "Stenosis", "Neuro_deficit", "Motor_deficit", "Bladder_dysf", "SIRS",
+                 "Fever", "Pain", "cRF", "Diabetes", "IV_druguse", "Immunosuppression",
+                 "Malignoma", "Liver_failure", "Tissue_culture_taken", "Tissue_culture_positive",
+                 "Location_lumb_loc", "Location_thoracic_loc", "Location_thoracolumbar_loc_T11_L2",
+                 "Location_multiple_loc", "Location_cervical_loc", "Location_lumbosac_loc",
+                 "Tissue_escherichia_coli", "Tissue_staphylococcus_aureus", "Tissue_proteus",
+                 "Tissue_staphylococcus_epidermis", "Tissue_pseudomonas_aeruginosa",
+                 "Tissue_propionibacterium_acnes", "Tissue_citrobacter", "Tissue_klebsiella",
+                 "Tissue_parvimonas_micra", "Tissue_alloiococcus", "Tissue_prevotella",
+                 "Tissue_eikenella_corrodens", "Tissue_streptococcus", "Tissue_raoultella",
+                 "Tissue_micrococcus", "Tissue_fusobacterium", "Tissue_corynebacterium",
+                 "Tissue_kocuria", "Tissue_serratia", "Tissue_clostridium")
+
+
+# Check the levels of predictor variables
+predictor_levels <- sapply(Propensity_Excel_Matched2[, predictor_cols], function(x) length(unique(x)))
+
+# Identify the variable(s) with one level
+variables_with_one_level <- names(predictor_levels[predictor_levels == 1])
+
+# Print the variable(s) causing the issue
+print(variables_with_one_level)
+
+# Print the variable(s) causing the issue
+print(variables_with_one_level)
+
+# Find columns with only one level in Propensity_Excel_Matched2
+columns_with_one_level <- sapply(Propensity_Excel_Matched2, function(x) length(unique(x)) == 1)
+
+# Remove columns with one level from Propensity_Excel_Matched2
+Propensity_Excel_Matched2Cleaned <- Propensity_Excel_Matched2[, !columns_with_one_level]
+
+
+# Create a new file path
+new_file_path1 <- paste0("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_MatchedFINAL.xlsx")
+
+# Write the data to the new Excel file #### this is the one
+write.xlsx(Propensity_Excel_Matched2Cleaned,new_file_path1)
+
+
+
+
+
+
+###logistic regression
+
+Propensity_Excel_MatchedFINAL <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_MatchedFINAL.xlsx")
+
+# Convert binary columns to factors with levels 0 and 1
+Propensity_Excel_MatchedFINAL <- as.data.frame(lapply(Propensity_Excel_MatchedFINAL, function(x) {
+  if (all(x %in% c(0, 1))) {
+    factor(x, levels = c(0, 1))
+  } else {
+    x
+  }
+}))
+
+
+
+# Fit the logistic regression model
+logistic_new <- glm(Surgical_Tx ~ Propensity_Excel_MatchedFINAL$Conservative_Tx + 
+                      Propensity_Excel_MatchedFINAL$Death, data = Propensity_Excel_MatchedFINAL, family = binomial)
+
+summary(logistic_new)
+
+
+
+#statistical tests
+
+#########################SURVIVAL
+
+
+
+###matching
+
+
+# Perform matching on complete cases
+matched_data <- matchit(formula = as.formula("Survival ~ ."), data = Propensity_Excel, method = "nearest", distance = "logit", replace = FALSE)
+
+# Print summary
+summary(matched_data)
+
+Propensity_Excel_Matched2 <- match.data(matched_data)
+
+logistic_model <- glm(Surgical_Tx ~ ., data = Propensity_Excel_Matched2, family = binomial, maxit = 1000)
+
+
+# Create a new file path
+new_file_path1 <- paste0("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_Matched2.xlsx")
+
+# Write the data to the new Excel file
+write.xlsx(Propensity_Excel_Matched2,new_file_path1)
+
+
+
+
+#t test between conservative vs surgery
+ttest_result <- t.test(Death ~ Conservative_Tx, data = Propensity_Excel_MatchedFINAL)
+ttest_result
+
+library(survival)
+install.packages("survival")
+library(ggplot2)
+
+
+library(ggplot2)
+
+library(ggplot2)
+
+# Create a scatter plot of Survival by Treatment group, with jittering and different shapes
+ggplot(Propensity_Excel_MatchedFINAL, aes(x = Conservative_Tx, y = Survival, shape = Surgical_Tx)) +
+  geom_jitter(width = 0.2, height = 0) +
+  labs(x = "Conservative_Tx", y = "Survival", shape = "Surgery_Tx") +
+  theme_minimal()
+
+
+
+
+
+library(ggplot2)
+
+# Create a violin plot to compare Survival between Treatment groups
+ggplot(Propensity_Excel_MatchedFINAL, aes(x = Conservative_Tx, y = Survival, fill = Surgical_Tx)) +
+  geom_violin() +
+  labs(x = "Conservative_Tx", y = "Survival", fill = "Surgery_Tx") +
+  theme_minimal()
+
+
+
+#compare it to the unmatched data
+
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+
+
+ttest_result_unmatched <- t.test(na.omit(Survival) ~ Conservative_Tx, data = Propensity_Excel)
+ttest_result_unmatched
+
+library(ggplot2)
+
+# Create a scatter plot to compare Survival between Treatment groups in the unmatched data
+ggplot(Propensity_Excel, aes(x = Conservative_Tx, y = Survival, shape = Surgery_Tx)) +
+  geom_jitter(width = 0.2, height = 0, na.rm = TRUE) +
+  labs(x = "Conservative_Tx", y = "Survival", shape = "Surgery_Tx") +
+  theme_minimal()
+
+
+library(gridExtra)
+library(ggplot2)
+
+
+library(gridExtra)
+library(ggplot2)
+
+# Import required libraries
+library(gridExtra)
+library(ggplot2)
+
+## Import required libraries
+library(gridExtra)
+library(ggplot2)
+
+# Define a function to perform t-tests and return relevant statistics
+t_test_and_stats <- function(dataset, survival_variable, treatment_variable) {
+  stats <- t.test(as.formula(paste0(survival_variable, " ~ ", treatment_variable)), data = dataset)
+  list(p_value = format(stats$p.value, digits = 3),
+       mean_group0 = format(stats$estimate[1], digits = 2),
+       mean_group1 = format(stats$estimate[2], digits = 2))
+}
+
+# Compute t-test statistics and p-values for matched and unmatched data
+matched_stats <- t_test_and_stats(Propensity_Excel_MatchedFINAL, "Survival", "Conservative_Tx")
+unmatched_stats <- t_test_and_stats(Propensity_Excel, "Survival", "Conservative_Tx")
+
+# Define a function to create plots
+create_plots <- function(dataset, treatment_variable, survival_variable, tx_variable, stats, title) {
+  scatter_plot <- ggplot(dataset, aes(x = !!sym(treatment_variable), y = !!sym(survival_variable), shape = !!sym(tx_variable))) +
+    geom_jitter(width = 0.2, height = 0) +
+    labs(x = treatment_variable, y = survival_variable, shape = tx_variable) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 8)) + # Adjust title font size here
+    ggtitle(paste0(title, "\n",
+                   "p-value = ", stats$p_value, "\n",
+                   "Mean (", treatment_variable, "): ", stats$mean_group0, "\n",
+                   "Mean (", tx_variable, "): ", stats$mean_group1))
+  
+  violin_plot <- ggplot(dataset, aes(x = !!sym(treatment_variable), y = !!sym(survival_variable), fill = !!sym(tx_variable))) +
+    geom_violin() +
+    labs(x = treatment_variable, y = survival_variable, fill = tx_variable) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 8)) + # Adjust title font size here
+    ggtitle(paste0(title, "\n",
+                   "p-value = ", stats$p_value, "\n",
+                   "Mean (", treatment_variable, "): ", stats$mean_group0, "\n",
+                   "Mean (", tx_variable, "): ", stats$mean_group1))
+  
+  list(scatter_plot = scatter_plot, violin_plot = violin_plot)
+}
+
+# Generate plots for matched and unmatched data
+matched_plots <- create_plots(Propensity_Excel_MatchedFINAL, "Conservative_Tx", "Survival", "Surgical_Tx", matched_stats, "Matched Data")
+unmatched_plots <- create_plots(Propensity_Excel, "Conservative_Tx", "Survival", "Surgical_Tx", unmatched_stats, "Unmatched Data")
+
+# Arrange the plots in a grid and print it
+grid_arrange <- grid.arrange(matched_plots$scatter_plot, matched_plots$violin_plot,
+                             unmatched_plots$scatter_plot, unmatched_plots$violin_plot,
+                             nrow = 2)
+print(grid_arrange)
+
+
+
+#only 30 days
+
+# Import necessary libraries
+library(gridExtra)
+library(ggplot2)
+library(dplyr)
+
+# Cap the survival at 360 days
+Propensity_Excel_MatchedFINAL$Survival <- pmin(Propensity_Excel_MatchedFINAL$Survival, 360)
+Propensity_Excel$Survival <- pmin(Propensity_Excel$Survival, 360)
+
+# Compute t-test statistics and p-values for matched and unmatched data
+matched_stats <- t_test_and_stats(Propensity_Excel_MatchedFINAL, "Survival", "Conservative_Tx")
+unmatched_stats <- t_test_and_stats(Propensity_Excel, "Survival", "Conservative_Tx")
+
+# Generate plots for matched and unmatched data
+matched_plots <- create_plots(Propensity_Excel_MatchedFINAL, "Conservative_Tx", "Survival", "Surgical_Tx", matched_stats, "Matched Data")
+unmatched_plots <- create_plots(Propensity_Excel, "Conservative_Tx", "Survival", "Surgical_Tx", unmatched_stats, "Unmatched Data")
+
+# Arrange the plots in a grid and print it
+grid_arrange <- grid.arrange(matched_plots$scatter_plot, matched_plots$violin_plot,
+                             unmatched_plots$scatter_plot, unmatched_plots$violin_plot,
+                             nrow = 2)
+print(grid_arrange)
+
+
+
+#DEATH
+# Create a contingency table for Death and Treatment groups
+death_table <- table(Propensity_Excel_MatchedFINAL$Conservative_Tx, Propensity_Excel_MatchedFINAL$Death)
+
+# Perform a chi-square test to compare proportions of death between treatment groups
+chi2_result <- chisq.test(death_table)
+chi2_result
+
+# Perform Fisher's exact test if sample sizes are small
+fisher_result <- fisher.test(death_table)
+fisher_result
+
+
+
+
+
+
+
+#################### unmatched data exploratory analysis
+
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+
+
+# Load necessary packages
+library(tidyverse)
+library(skimr)
+library(readxl)
+library(ggplot2)
+library(ggpubr) # for 'stat_compare_means' function
+install.packages("skimr")
+library(skimr)
+library(lubridate)
+install.packages("writexl")
+
+
+# Load the data
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+
+# Modify the "Sex" column
+Propensity_Excel <- Propensity_Excel %>%
+  mutate(Female = ifelse(Sex %in% c(2, 0), 1, 0))
+
+# Write the updated dataframe to a new Excel file
+write_xlsx(Propensity_Excel, "OneDrive/Spondylodiscitis Propensity/Propensity Excel_new.xlsx")
+
+
+
+
+
+
+
+# Split data into surgical and conservative treatment groups
+surgical_data <- Propensity_Excel %>% filter(Surgical_Tx == 1)
+conservative_data <- Propensity_Excel %>% filter(Surgical_Tx == 0)
+
+# For visualizations
+# Loop through all variables and make appropriate plot
+# Loop through all variables and make appropriate plot
+for(var in names(Propensity_Excel)){
+  if(is.numeric(Propensity_Excel[[var]])){
+    # Boxplot for numeric variables
+    p <- ggplot(Propensity_Excel, aes(x = factor(Surgical_Tx), y = .data[[var]], fill = factor(Surgical_Tx))) +
+      geom_boxplot() +
+      stat_compare_means(method = "t.test") +
+      theme_minimal() +
+      labs(y = var, x = "Treatment Type", fill = "Treatment Type") +
+      scale_fill_discrete(labels = c("Conservative Treatment", "Surgical Treatment")) +
+      ggtitle(paste("Boxplot of", var, "by Treatment Type")) +
+      theme(legend.position = "bottom")
+    print(p) # Explicitly print plot
+  } else if(is.factor(Propensity_Excel[[var]]) || is.logical(Propensity_Excel[[var]])){
+    # Barplot for categorical variables
+    prop_table <- table(Propensity_Excel$Surgical_Tx, Propensity_Excel[[var]])
+    chisq_test <- chisq.test(prop_table)
+    p_val <- chisq_test$p.value
+    
+    p <- ggplot(Propensity_Excel, aes(x = factor(Surgical_Tx), fill = .data[[var]])) +
+      geom_bar(position = "dodge") +
+      annotate("text", x = 1.5, y = max(table(Propensity_Excel$Surgical_Tx, Propensity_Excel[[var]])), 
+               label = paste("p-value =", round(p_val, 3)), size = 4, colour = "red") +
+      theme_minimal() +
+      labs(x = "Treatment Type", fill = var) +
+      scale_x_discrete(labels = c("Conservative Treatment", "Surgical Treatment")) +
+      ggtitle(paste("Barplot of", var, "by Treatment Type")) +
+      theme(legend.position = "bottom") 
+    print(p) # Explicitly print plot
+  }
+  print(paste0("Plotted ", var))
+}
+
+
+
+
+#find outlierts
+
+# Load necessary libraries
+library(readxl)
+
+# Load the data
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+
+# Columns to check
+cols_to_check <- c("Days_in_hospital", "CRP_admission", "WCC_admission", "Age")
+
+# Function to calculate the number of outliers in a column
+num_outliers <- function(x) {
+  x <- as.numeric(x) # Ensures data are numeric
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  sum(x < Q1 - 1.5 * IQR | x > Q3 + 1.5 * IQR, na.rm = TRUE)
+}
+
+# Calculate the number of outliers in each column
+outlier_counts <- sapply(Propensity_Excel[cols_to_check], num_outliers)
+
+# Print columns that have outliers
+print(outlier_counts[outlier_counts > 0])
+
+
+#plotit
+
+# Convert columns to numeric type
+Propensity_Excel$Days_in_hospital <- as.numeric(Propensity_Excel$Days_in_hospital)
+Propensity_Excel$CRP_admission <- as.numeric(Propensity_Excel$CRP_admission)
+Propensity_Excel$WCC_admission <- as.numeric(Propensity_Excel$WCC_admission)
+Propensity_Excel$Age <- as.numeric(Propensity_Excel$Age)
+
+# Columns to check
+cols_to_check <- c("Days_in_hospital", "CRP_admission", "WCC_admission", "Age")
+
+# Subset the data to only the columns to check
+data_subset <- Propensity_Excel %>%
+  select(cols_to_check)
+
+# Convert the data from wide to long format for plotting
+data_long <- data_subset %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+# Create a boxplot for each variable with outliers highlighted in red
+ggplot(data_long, aes(x = Variable, y = Value)) +
+  geom_boxplot(outlier.shape = NA) +  # Exclude outliers from the boxplots
+  geom_jitter(width = 0.3, alpha = 0.4) +
+  geom_point(data = filter(data_long, abs(Value) > 3*sd(Value)), colour="red", shape = 20, size = 1) +  # Add outliers back in red
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Variable", y = "Value", title = "Boxplot of selected variables")
+
+
+
+
+#remove outliers: Winsorizing technqiue 
+
+
+# Install the necessary package
+if (!require(robustHD)) {
+  install.packages("robustHD")
+}
+
+# Load the library
+library(robustHD)
+
+# Specify the columns to Winsorize
+cols_to_winsorize <- c("Days_in_hospital", "CRP_admission", "WCC_admission", "Age")
+
+# Winsorize the columns
+for (col in cols_to_winsorize) {
+  Propensity_Excel[[col]] <- winsorize(Propensity_Excel[[col]], probs = c(0.05, 0.95))
+}
+
+# Write the Winsorized data to a new Excel file
+write.xlsx(Propensity_Excel, "OneDrive/Spondylodiscitis Propensity/Propensity Excel_winsorized.xlsx", rowNames = FALSE)
+
+
+
+######################### find the outliers 
+# Load necessary libraries
+library(readxl)
+library(dplyr)
+
+# Load the original dataset again
+Propensity_Excel_orig <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+
+# Define an empty data frame to store the outlier information
+outliers_info <- data.frame(Patient_ID = integer(), Department = character(), Variable = character())
+
+# For each column to check for outliers
+for (col in cols_to_winsorize) {
+  # Ensure the column is numeric
+  if (is.numeric(Propensity_Excel_orig[[col]])) {
+    # Identify the outliers using boxplot.stats() function
+    outliers <- boxplot.stats(Propensity_Excel_orig[[col]], coef = 1.5)$out
+    
+    # If there are any outliers
+    if (length(outliers) > 0) {
+      # Identify the rows where the value is an outlier
+      outlier_rows <- which(Propensity_Excel_orig[[col]] %in% outliers)
+      
+      # Record the patient IDs, departments, and variable names for these outliers
+      outliers_info <- rbind(outliers_info, data.frame(Patient_ID = Propensity_Excel_orig[outlier_rows, "Patient_ID"],
+                                                       Department = Propensity_Excel_orig[outlier_rows, "Department"],
+                                                       Variable = col))
+    }
+  }
+}
+
+# Remove duplicates (in case some rows had outliers in multiple columns)
+outliers_info <- outliers_info[!duplicated(outliers_info), ]
+
+# Print the outlier information
+print(outliers_info)
+
+# Count the number of outliers per department
+outliers_per_department <- outliers_info %>%
+  group_by(Department) %>%
+  summarise(Outlier_Count = n())
+
+# Find the department with the most outliers
+department_with_most_outliers <- outliers_per_department %>%
+  filter(Outlier_Count == max(Outlier_Count))
+
+# Save the outlier information to a CSV file
+write.csv(outliers_info, "OneDrive/Spondylodiscitis Propensity/Outliers_info.csv", row.names = FALSE)
+
+
+######################remove outliers entirely 
+
+
+# Function to remove outliers from a column
+remove_outliers <- function(column, coef = 1.5) {
+  # Calculate the lower and upper bounds for outliers
+  q1 <- quantile(column, 0.25, na.rm = TRUE)
+  q3 <- quantile(column, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  lower_bound <- q1 - coef * iqr
+  upper_bound <- q3 + coef * iqr
+  
+  # Remove outliers outside the bounds
+  column[column < lower_bound | column > upper_bound] <- NA
+  
+  # Return the column with outliers removed
+  return(column)
+}
+
+# Loop through each column to remove outliers
+for (col in cols_to_check) {
+  if (is.numeric(Propensity_Excel_orig[[col]])) {
+    Propensity_Excel_orig[[col]] <- remove_outliers(Propensity_Excel_orig[[col]])
+  }
+}
+
+# Create a new workbook to store the cleaned data
+new_workbook <- createWorkbook()
+
+# Add a sheet for cleaned data
+addWorksheet(new_workbook, "CleanedData")
+
+# Write the cleaned data to the new sheet
+writeData(new_workbook, "CleanedData", Propensity_Excel_orig)
+
+# Save the new workbook to an Excel file
+saveWorkbook(new_workbook, "OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers2.xlsx", overwrite = TRUE)
+
+
+
+
+
+
+
+
+###############comparison of excel sheets 
+
+
+# Load necessary packages
+library(ggplot2)
+library(ggpubr)
+library(readxl)
+library(gridExtra)
+library(ggsignif)
+
+
+# Load the data
+Propensity_Excel <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel.xlsx")
+
+# Subset the data for Death and Conservative_tx
+death_data_initial <- Propensity_Excel %>% select(Death, Conservative_Tx)
+
+# Convert variables to factors in the initial dataset
+death_data_initial$Death <- factor(death_data_initial$Death, levels = c(0, 1), labels = c("Survived", "Death"))
+death_data_initial$Conservative_Tx <- factor(death_data_initial$Conservative_Tx, levels = c(0, 1), labels = c("Conservative_tx=0", "Conservative_tx=1"))
+
+# Save the winsorized dataset
+write.xlsx(Propensity_Excel, "OneDrive/Spondylodiscitis Propensity/Propensity Excel_winsorized.xlsx", rowNames = FALSE)
+
+# Load the winsorized dataset
+Propensity_Excel_winsorized <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity Excel_winsorized.xlsx")
+
+# Subset the data for Death and Conservative_tx in the winsorized dataset
+death_data_winsorized <- Propensity_Excel_winsorized %>% select(Death, Conservative_Tx)
+
+# Convert variables to factors in the winsorized dataset
+death_data_winsorized$Death <- factor(death_data_winsorized$Death, levels = c(0, 1), labels = c("Survived", "Death"))
+death_data_winsorized$Conservative_Tx <- factor(death_data_winsorized$Conservative_Tx, levels = c(0, 1), labels = c("Conservative_tx=0", "Conservative_tx=1"))
+
+# Load the cleaned data without outliers
+Propensity_Excel_nooutliers <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers.xlsx")
+
+# Subset the data for Death and Conservative_tx in the dataset with outliers removed
+death_data_nooutliers <- Propensity_Excel_nooutliers %>% select(Death, Conservative_Tx)
+
+# Convert variables to factors in the dataset with outliers removed
+death_data_nooutliers$Death <- factor(death_data_nooutliers$Death, levels = c(0, 1), labels = c("Survived", "Death"))
+death_data_nooutliers$Conservative_Tx <- factor(death_data_nooutliers$Conservative_Tx, levels = c(0, 1), labels = c("Conservative_tx=0", "Conservative_tx=1"))
+
+
+# Create the three barplots side by side using grid.arrange
+grid.arrange(
+  # Plot for initial dataset
+  ggplot(death_data_initial, aes(x = Conservative_Tx, fill = Death)) +
+    geom_bar(position = "fill", show.legend = TRUE) +
+    labs(x = "Conservative Treatment", y = "Proportion", fill = "Outcome") +
+    scale_fill_manual(values = c("blue", "orange"), labels = c("Survived", "Death")) +
+    ggtitle("Initial Dataset") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 12, face = "bold"),
+          axis.text.y = element_text(size = 12),
+          axis.title = element_text(size = 14, face = "bold"),
+          plot.title = element_text(size = 16, face = "bold"),
+          legend.position = "bottom"),
+  
+  # Plot for winsorized dataset
+  ggplot(death_data_winsorized, aes(x = Conservative_Tx, fill = Death)) +
+    geom_bar(position = "fill", show.legend = FALSE) +
+    labs(x = "Conservative Treatment", y = "Proportion", fill = "Outcome") +
+    scale_fill_manual(values = c("blue", "orange"), labels = c("Survived", "Death")) +
+    ggtitle("Winsorized Dataset") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 12, face = "bold"),
+          axis.text.y = element_text(size = 12),
+          axis.title = element_text(size = 14, face = "bold"),
+          plot.title = element_text(size = 16, face = "bold"),
+          legend.position = "none"),
+  
+  # Plot for dataset with outliers removed
+  ggplot(death_data_nooutliers, aes(x = Conservative_Tx, fill = Death)) +
+    geom_bar(position = "fill", show.legend = FALSE) +
+    labs(x = "Conservative Treatment", y = "Proportion", fill = "Outcome") +
+    scale_fill_manual(values = c("blue", "orange"), labels = c("Survived", "Death")) +
+    ggtitle("Dataset with Outliers Removed") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 12, face = "bold"),
+          axis.text.y = element_text(size = 12),
+          axis.title = element_text(size = 14, face = "bold"),
+          plot.title = element_text(size = 16, face = "bold"),
+          legend.position = "none"),
+  
+  nrow = 1  # Arrange plots in a single row
+)
+
+
+
+
+
+
+
+
+
+
+########### data analysis with outliers removed and without colinear variabeles - not matched
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(writexl)
+
+## unmatched but cleaned exploratory data analysis
+
+Propensity_Excel_nooutliers <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_GEIL.xlsx")
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterecoccus",	"Tissue_diverse")
+
+Propensity_Excel_nooutliers$CRP_admission <- as.numeric(Propensity_Excel_nooutliers$CRP_admission)
+
+# Define your custom functions for handling NA's
+my_mean <- function(x) mean(x, na.rm = TRUE)
+my_sd <- function(x) sd(x, na.rm = TRUE)
+my_median <- function(x) median(x, na.rm = TRUE)
+my_iqr <- function(x) IQR(x, na.rm = TRUE)
+
+
+# Split the data by Surgical_Tx
+grouped_data <- split(Propensity_Excel_nooutliers, Propensity_Excel_nooutliers$Surgical_Tx)
+
+# Calculate descriptive statistics for each group
+grouped_stats <- lapply(grouped_data, function(group) {
+  # Add count column
+  count <- nrow(group)
+  
+  df <- summarise(group, across(all_of(continuous_cols), list(mean = my_mean, sd = my_sd, median = my_median, IQR = my_iqr), .names = "{.col}.{.fn}"))
+  df$Group <- unique(group$Surgical_Tx)
+  df$Count <- count  # Add count column to the data frame
+  return(df)
+})
+
+# Combine the statistics for each group
+combined_stats <- do.call(rbind, grouped_stats)
+
+combined_stats <- combined_stats %>%
+  rename(Surgical_Tx = Group)
+
+print(combined_stats)
+
+
+# Load required packages
+library(dplyr)
+library(tidyr)
+library(writexl)
+
+# Reshape the data frame to match the desired format
+reshaped_stats <- combined_stats %>%
+  pivot_longer(cols = -c(Surgical_Tx, Count),
+               names_to = c("Variable", "Statistic"),
+               names_pattern = "(.*)\\.(.*)") %>%
+  pivot_wider(names_from = Surgical_Tx,
+              values_from = value,
+              names_prefix = "Surgical_Tx = ")
+
+# Print the reshaped statistics
+print(reshaped_stats)
+
+
+# Save the combined statistics to an Excel file
+write_xlsx(reshaped_stats, "continuous_descriptive_statisticsCompCorrectedCount3.xlsx")
+
+
+
+
+
+
+#categorical variable tables
+
+Propensity_Excel_nooutliers <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_GEIL.xlsx")
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department_A","Department_B", "Department_C", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterococcus",	"Tissue_diverse")
+
+Propensity_Excel_nooutliers[categorical_cols] <- lapply(Propensity_Excel_nooutliers[categorical_cols], as.factor)
+
+outcome_variables <- c("Death","Relapse_yes","Neuro_def_at_dc") 
+explanatory_variables <- categorical_cols
+
+
+# Function to compute a summary table for a single categorical variable
+get_summary_table <- function(var_name, data) {
+  # Frequency table
+  freq_table <- table(data[[var_name]], useNA = "no")
+  
+  # Data frame version
+  df <- data.frame(
+    Variable = var_name,
+    SubFactor = names(freq_table),
+    Frequency = as.numeric(freq_table),
+    stringsAsFactors = FALSE
+  )
+  
+  # Add a percentage column
+  df$Percentage <- df$Frequency / sum(df$Frequency) * 100
+  
+  # Calculate mode
+  df$Mode <- ifelse(df$Frequency == max(df$Frequency), "Yes", "No")
+  
+  return(df)
+}
+
+# Apply the function to each categorical column, separated by Surgical_Tx
+categorical_tables <- lapply(categorical_cols, function(var_name) {
+  grouped_tables <- Propensity_Excel_nooutliers %>%
+    group_by(Surgical_Tx) %>%
+    do(get_summary_table(var_name, .))
+  
+  return(grouped_tables)
+})
+
+# Combine all data frames into a single data frame
+combined_categorical_table <- do.call(rbind, categorical_tables)
+
+# Write to an Excel file
+writexl::write_xlsx(combined_categorical_table, "combined_categorical_tableSep_corrected2_NEW.xlsx")
+
+
+
+
+
+
+#statistical test for continous variables done manually using graphpad
+
+
+
+# Perform statistical tests for categorical variables
+
+# Create an empty list to store the results
+results <- list()
+
+# Perform statistical tests for categorical variables
+for (var_name in categorical_cols) {
+  if (var_name %in% names(Propensity_Excel_nooutliers) && is.factor(Propensity_Excel_nooutliers[[var_name]])) {
+    # Create contingency table
+    contingency_table <- table(Propensity_Excel_nooutliers$Surgical_Tx, Propensity_Excel_nooutliers[[var_name]])
+    
+    # Perform chi-square test
+    chi_square_test <- chisq.test(contingency_table, correct = FALSE)
+    
+    # Store the results in a data frame
+    result_df <- data.frame(
+      Variable = var_name,
+      Surgical_Tx_1_Frequency = ifelse(is.na(contingency_table[1, ]), "", contingency_table[1, ]),
+      Surgical_Tx_0_Frequency = ifelse(is.na(contingency_table[2, ]), "", contingency_table[2, ]),
+      "Chi-square Test: Chi-sq" = format(chi_square_test$statistic, digits = 2),
+      "Chi-square Test: p-value" = format(chi_square_test$p.value, digits = 4),
+      "Chi-square Test: Degrees of Freedom" = chi_square_test$parameter,
+      "Chi-square Test: Expected Frequencies" = paste(format(chi_square_test$expected, digits = 2), collapse = ", ")
+    )
+    
+    # Add the result to the list
+    results[[var_name]] <- result_df
+  }
+}
+
+# Combine the results into a single data frame
+combined_results <- do.call(rbind, results)
+
+
+# Save the combined results to an Excel file
+library(openxlsx)
+write.xlsx(combined_results, "categorical_statistical_results_NEW3.xlsx", row.names = FALSE)
+
+
+
+### additional analysis
+
+
+#ensure no outliers
+
+#impute with median and mode imputing
+
+single_var <- Propensity_Excel_nooutliers$some_column_name
+Q1 <- quantile(single_var, 0.25)
+Q3 <- quantile(single_var, 0.75)
+IQR <- Q3 - Q1
+
+outliers <- which(single_var < Q1 - 1.5 * IQR | single_var > Q3 + 1.5 * IQR)
+print(outliers) #no outliers
+
+
+
+
+
+
+
+
+
+
+#descriptive graphs for categorical and continous variables (not imputed)
+
+
+#### VIOLIN PLOT
+
+
+# Load required packages
+library(ggplot2)
+library(gridExtra)  # For combining multiple ggplots
+library(forcats)
+library(dplyr)
+library(tidyr)
+
+plot_variable <- function(df, var_name, type) {
+  if (type == "continuous") {
+    p <- ggplot(df, aes(x = factor(Surgical_Tx), y = !!sym(var_name), fill = factor(Surgical_Tx))) +
+      geom_violin(alpha = 0.8) +
+      stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "red") +
+      geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+      geom_jitter(width = 0.15, size = 0.8, alpha = 0.3) +
+      scale_fill_manual(values = c("0" = "#FF69B4", "1" = "#00D2FF"), guide = guide_legend(title = "Treatment Type")) +
+      theme_minimal() +
+      labs(y = var_name) +  # Removed fill = "Surgical_Tx"
+      theme(legend.position="none", 
+            plot.title = element_text(hjust = 0.5, size=16,face="bold"), 
+            axis.text=element_text(size=10), 
+            axis.title=element_text(size=12)) +
+      ggtitle(paste(var_name)) +
+      scale_x_discrete(labels = c("0" = "Conservative Tx", "1" = "Surgical Tx"))
+    return(p)
+  } else if (type == "categorical") {
+    # Convert binary variables to percentage
+    df <- df %>%
+      group_by(Surgical_Tx) %>%
+      mutate(Percentage = sum(!!sym(var_name), na.rm = TRUE)/n()*100)
+    
+    # Draw bar plot
+    p <- ggplot(df, aes(x = factor(Surgical_Tx), y = Percentage, fill = factor(Surgical_Tx))) +
+      geom_bar(stat = "identity", position = position_dodge()) +
+      scale_fill_manual(values = c("0" = "#FF69B4", "1" = "#00D2FF"), guide = guide_legend(title = "Treatment Type")) +
+      theme_minimal() +
+      labs(y = "Percentage (%)", ) +  # Removed fill = "Surgical_Tx"
+      theme(legend.position="none", 
+            plot.title = element_text(hjust = 0.5, size =), 
+            axis.text=element_text(size=14), 
+            axis.title=element_text(size=16,face="bold")) +
+      ggtitle(paste("Bar plot of", var_name, "vs Treatment Type")) +
+      scale_x_discrete(labels = c("0" = "Conservative Tx", "1" = "Surgical Tx"))
+    return(p)
+  }
+}
+
+
+
+# Create an empty list to store plots
+plots <- list()
+
+# Loop over each column
+for (col in c(continuous_cols, categorical_cols)) {
+  
+  # Check if the column exists in the data
+  if (!col %in% colnames(Propensity_Excel_nooutliers)) {
+    print(paste("Column", col, "does not exist in the data. Skipping."))
+    next
+  }
+  
+  # Check if the column is continuous or categorical
+  if (col %in% continuous_cols) {
+    plots[[length(plots) + 1]] <- plot_variable(Propensity_Excel_nooutliers, col, "continuous")
+  } else if (col %in% categorical_cols) {
+    plots[[length(plots) + 1]] <- plot_variable(Propensity_Excel_nooutliers, col, "categorical")
+  }
+}
+
+# Combine all plots in one plot
+combined_plot <- gridExtra::grid.arrange(grobs = plots, ncol = 3)
+print(combined_plot)
+
+
+
+
+
+
+
+##### BOXPLOTS
+
+
+
+# Define a function to generate comparative bar plots for binary variables
+plot_binary <- function(df, var_name) {
+  
+  # Calculate the percentage in each group
+  df_percent <- df %>%
+    group_by(Surgical_Tx, !!sym(var_name)) %>%
+    summarise(n = n(), .groups = 'drop') %>%
+    mutate(freq = n / sum(n) * 100) %>%
+    filter(!!sym(var_name) == 1)  # We're interested in the cases where the variable equals 1
+  
+  # Bar plot
+  p <- ggplot(df_percent, aes(x = factor(Surgical_Tx), y = freq, fill = factor(Surgical_Tx))) +
+    geom_bar(stat = "identity", position = "dodge", width = 0.6) +
+    geom_text(aes(label = paste0(round(freq, 1),"%")), vjust = -0.5, position = position_dodge(0.6), size = 3) + # Decreased font size
+    scale_fill_manual(values = c("0" = "#fc03eb", "1" = "#03fcfc"), guide = FALSE) +  # Change the color
+    scale_y_continuous(limits = c(0, 100)) +
+    scale_x_discrete(labels = c("Conservative Tx", "Surgical Tx")) +
+    theme_classic() +
+    labs(y = "Percentage", x = "") +
+    ggtitle(paste(var_name)) +
+    theme(
+      plot.title = element_text(size = 11, face = "bold", hjust = 0.5), # Reduced to 1/2
+      axis.title = element_text(size = 9), # Reduced to 1/2
+      axis.text = element_text(size = 7.5), # Reduced to 1/2
+    )
+  
+  return(p)
+}
+
+# Get all binary variable names
+# Select variables that are binary (2 unique values) or ternary (3 unique values)
+vars_binary<- names(Propensity_Excel_nooutliers)[sapply(Propensity_Excel_nooutliers, function(x) length(unique(x)) %in% c(2, 3))]
+
+# Remove 'Department' from the list
+vars_binary <- vars_binary[!vars_binary %in% c("Surgical_Tx", "Conservative_Tx")]
+
+# Calculate the number of list elements we need
+n_lists <- ceiling(length(vars_binary) / 31)  # Adjusted for 20 plots per grid
+
+# Create a list of empty lists
+plots_list <- vector("list", n_lists)
+
+# Generate a plot for each variable and store it in the corresponding list
+for (i in seq_along(vars_binary)) {
+  list_index <- ceiling(i / 31)  # Adjusted for 20 plots per grid
+  plots_list[[list_index]][[vars_binary[i]]] <- plot_binary(Propensity_Excel_nooutliers, vars_binary[i])
+}
+
+# Calculate the number of rows and columns for the grid
+n_cols <- 4  # Adjusted for 4 columns
+n_rows <- 8 # Adjusted for 5 rows
+
+# Create vector for heights and widths
+heights <- rep(1, n_rows)
+widths <- rep(1, n_cols)
+
+# Arrange the plots into a grid
+for (i in seq_along(plots_list)) {
+  do.call("grid.arrange", c(plots_list[[i]], ncol = n_cols, nrow = n_rows, list(heights = heights, widths = widths)))
+}
+
+
+
+
+
+######### regression analyses and graphs for unmatched data
+
+
+
+Propensity_Excel_nooutliers <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_GEIL.xlsx")
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department_A","Department_B", "Department_C", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterococcus",	"Tissue_diverse")
+
+Propensity_Excel_nooutliers[categorical_cols] <- lapply(Propensity_Excel_nooutliers[categorical_cols], as.factor)
+
+outcome_variables <- c("Death","Relapse_yes","Neuro_def_at_dc") 
+explanatory_variables <- categorical_cols
+
+
+
+#bar plot for categorical explanatory variables regression
+
+
+plot_categorical <- function(model, data, outcome) {
+  # Create a dataframe of significant variables
+  sig_vars <- broom::tidy(model) %>% filter(p.value < 0.05)
+  
+  # Initialize an empty list to store the plots
+  plots <- list()
+  
+  # Iterate over significant variables
+  for (var_name in sig_vars$term) {
+    if (var_name != "(Intercept)") {
+      # Remove the "1" from the variable name if present
+      original_var_name <- gsub("1$", "", var_name)
+      
+      # Add predicted probabilities to the data
+      data$predicted_prob <- predict(model, type = "response")
+      
+      # Create a boxplot
+      p <- ggplot(data, aes_string(x = original_var_name, y = 'predicted_prob')) +
+        geom_boxplot(aes(fill = original_var_name)) +
+        scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+        theme_minimal(base_size = 12) +
+        labs(x = original_var_name, y = paste("Probability of", outcome), title = paste(outcome, "vs", original_var_name)) +
+        theme(
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12, face = "bold"),
+          legend.position = "none",
+          panel.grid.major = element_line(color = "grey", linetype = "dashed")
+        )
+      
+      # Append the plot to the list
+      plots[[length(plots) + 1]] <- p
+    }
+  }
+  
+  # Return the list of plots
+  return(plots)
+}
+
+
+
+
+
+# Initialize an empty list to store all plots
+all_plots <- list()
+
+# Perform the multivariate logistic regression for each outcome variable
+for (outcome in outcome_variables) {
+  # Define the formula
+  formula <- as.formula(paste(outcome, "~", paste(categorical_cols, collapse = " + ")))
+  
+  # Run the logistic regression using completed data
+  model <- glm(formula, family = binomial, data = Propensity_Excel_nooutliers)
+  
+  # Generate bar plots for significant variables and append to the list of all plots
+  all_plots <- c(all_plots, plot_categorical(model, Propensity_Excel_nooutliers, outcome))
+}
+
+# Arrange all plots into a grid
+grid.arrange(grobs = all_plots, ncol = 3)
+
+
+
+model <- glm(formula, family = binomial, data = Propensity_Excel_nooutliers)
+summary(model)
+predicted_prob <- predict(model, type = "response")
+
+#bar plot for continous explanatory variables regression
+
+
+
+plot_continuous <- function(model, data, outcome) {
+  # Create a dataframe of significant variables
+  sig_vars <- broom::tidy(model) %>% filter(p.value < 0.05)
+  
+  # Predict probabilities
+  predicted_prob <- predict(model, type = "response")
+  
+  # Check if the number of predictions matches the number of rows in the data
+  if (length(predicted_prob) != nrow(data)) {
+    cat("Number of predictions does not match the number of rows in the data.\n")
+    cat("Number of predictions:", length(predicted_prob), "\n")
+    cat("Number of rows in data:", nrow(data), "\n")
+    stop("Please check the model and data.")
+  }
+  
+  # Add predicted probabilities to the data
+  data$predicted_prob <- predicted_prob
+  
+  # Initialize an empty list to store the plots
+  plots <- list()
+  
+  # Iterate over significant variables
+  for (var_name in sig_vars$term) {
+    if (var_name != "(Intercept)") {
+      # Remove the "1" from the variable name if present
+      original_var_name <- gsub("1$", "", var_name)
+      
+      # Create a scatter plot with regression line
+      p <- ggplot(data, aes_string(x = original_var_name, y = 'predicted_prob')) +
+        geom_point(color = "red") +
+        geom_smooth(method = "glm", method.args = list(family = "binomial"), color = "red", se = FALSE) +
+        scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+        theme_minimal(base_size = 12) +
+        labs(x = original_var_name, y = paste("Probability of", outcome), title = paste(outcome, "vs", original_var_name)) +
+        theme(
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12, face = "bold"),
+          panel.grid.major = element_line(color = "grey", linetype = "dashed")
+        )
+      
+      # Append the plot to the list
+      plots[[length(plots) + 1]] <- p
+    }
+  }
+  
+  # Return the list of plots
+  return(plots)
+}
+
+# Initialize an empty list to store all plots
+all_plots <- list()
+
+# Perform the multivariate logistic regression for each outcome variable
+for (outcome in outcome_variables) {
+  # Define the formula
+  formula <- as.formula(paste(outcome, "~", paste(continuous_cols, collapse = " + ")))
+  
+  # Run the logistic regression using completed data
+  model <- glm(formula, family = binomial, data = Propensity_Excel_nooutliers)
+  
+  # Generate bar plots for significant variables and append to the list of all plots
+  all_plots <- c(all_plots, plot_continuous(model, Propensity_Excel_nooutliers, outcome))
+}
+
+# Arrange all plots into a grid
+if (length(all_plots) > 0) {
+  grid.arrange(grobs = all_plots, ncol = 3)
+} else {
+  cat("No plots to display.")
+}
+
+
+
+
+
+
+############# MATCH DATA
+
+
+
+Propensity_Excel_nooutliers <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_GEIL.xlsx")
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterecoccus",	"Tissue_diverse")
+
+install.packages("mice")
+library(mice)
+
+data <-  read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_GEIL.xlsx")
+
+md.pattern(data)
+
+imputed_data <- mice(data, m=5, maxit = 50, method = 'pmm', seed = 500)
+completed_data <- complete(imputed_data, 1)
+
+
+write_xlsx(completed_data, "OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_imputed_FINAL_corrected.xlsx")
+
+
+
+
+#use imputed data to match it
+
+imputed_data <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_imputed_FINAL_corrected.xlsx")
+
+
+library(MatchIt)
+
+
+
+binary_cols <- c("Surgical_Tx", "Department", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                 "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                 "Location_lumb_loc",	"Location_thoracic_loc",
+                 "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                 "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                 "Tissue_propionibacteriumacnes", "Tissue_enterecoccus",	"Tissue_diverse")
+
+
+# Convert binary variables to factors
+completed_data[binary_cols] <- lapply(imputed_data[binary_cols], factor)
+
+
+
+
+####new approach using select variables
+# Define the variables you want to match on
+match_vars <- c("Female", "Epidural", "Paravertebral", "Neuro_deficit", "SIRS", "cRF", 
+                "Diabetes", "IV_druguse", "Immunosuppression", "Malignoma", "Liver_failure",
+                "Location_lumb_loc", "Location_thoracic_loc", "Location_thoracolumbar_loc_T11_L2",
+                "Location_multiple_loc", "Location_cervical_loc", "Location_lumbosac_loc", 
+                "Tissue_escherichiacoli", "Tissue_staphylococcus", "Tissue_multiresistant", 
+                "Tissue_streptococcus", "Tissue_enterococcus", "Tissue_propionibacteriumacnes",
+                "Tissue_diverse")
+
+# Convert variables to a formula
+match_formula <- as.formula(paste("Surgical_Tx ~", paste(match_vars, collapse = " + ")))
+
+# Perform matching
+matched_data <- matchit(formula = match_formula, 
+                        data = imputed_data, 
+                        method = "nearest", 
+                        distance = "logit", 
+                        replace = FALSE)
+
+
+
+
+
+
+# Print summary
+summary(matched_data)
+
+# Get matched data
+completed_data_matched <- match.data(matched_data)
+
+# Build a logistic regression model with more iterations
+logistic_model <- glm(Surgical_Tx ~ ., data = completed_data_matched, family = binomial, maxit = 1000)
+
+
+write_xlsx(completed_data_matched, "OneDrive/Spondylodiscitis Propensity/Propensity_Excel_Matched_noOutliers_Imputed_corrected.xlsx")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#do same caluclation for matched and imputed data
+
+imputed_data_matched <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_Matched_noOutliers_Imputed_corrected.xlsx")
+
+# Find columns with only one unique value
+single_valued_columns <- apply(imputed_data_matched, 2, function(x) length(unique(x)) == 1)
+
+# Print the names of the columns with only one unique value
+names(single_valued_columns)[single_valued_columns]
+
+#define columns
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterecoccus",	"Tissue_diverse")
+
+
+imputed_data_matched$CRP_admission <- as.numeric(imputed_data_matched$CRP_admission)
+
+# Define your custom functions for handling NA's
+my_mean <- function(x) mean(x, na.rm = TRUE)
+my_sd <- function(x) sd(x, na.rm = TRUE)
+my_median <- function(x) median(x, na.rm = TRUE)
+my_iqr <- function(x) IQR(x, na.rm = TRUE)
+
+
+
+
+
+## Load required packages
+library(dplyr)
+library(tidyr)
+library(writexl)
+
+# Split the data by Surgical_Tx
+grouped_data_imputed <- split(imputed_data_matched, imputed_data_matched$Surgical_Tx)
+
+# Calculate descriptive statistics for each group
+grouped_stats_imputed <- lapply(grouped_data_imputed, function(group) {
+  # Add count column
+  count <- nrow(group)
+  
+  df <- summarise(group, across(all_of(continuous_cols), list(mean = my_mean, sd = my_sd, median = my_median, IQR = my_iqr), .names = "{.col}.{.fn}"))
+  df$Surgical_Tx <- unique(group$Surgical_Tx)
+  df$Count <- count  # Add count column to the data frame
+  return(df)
+})
+
+# Combine the statistics for each group
+combined_stats_imputed <- do.call(rbind, grouped_stats_imputed)
+
+# Reshape the data frame to match the desired format
+reshaped_stats_imputed <- combined_stats_imputed %>%
+  pivot_longer(cols = -c(Surgical_Tx, Count),
+               names_to = c("Variable", "Statistic"),
+               names_pattern = "(.*)\\.(.*)") %>%
+  pivot_wider(names_from = Surgical_Tx,
+              values_from = value,
+              names_prefix = "Surgical_Tx = ")
+
+# Print the reshaped statistics
+print(reshaped_stats_imputed)
+
+# Save the combined statistics to an Excel file
+write_xlsx(reshaped_stats_imputed, "continuous_descriptive_statisticsCompCorrectedCount_imputed_reshaped.xlsx")
+
+
+
+
+#categorical variable tables
+
+# Convert categorical variables to factors
+imputed_data_matched[categorical_cols] <- lapply(imputed_data_matched[categorical_cols], as.factor)
+
+# Function to compute a summary table for a single categorical variable
+get_summary_table <- function(var_name, data) {
+  # Frequency table
+  freq_table <- table(data[[var_name]], useNA = "no")
+  
+  # Data frame version
+  df <- data.frame(
+    Variable = var_name,
+    SubFactor = names(freq_table),
+    Frequency = as.numeric(freq_table),
+    stringsAsFactors = FALSE
+  )
+  
+  # Add a percentage column
+  df$Percentage <- df$Frequency / sum(df$Frequency) * 100
+  
+  # Calculate mode
+  df$Mode <- ifelse(df$Frequency == max(df$Frequency), "Yes", "No")
+  
+  return(df)
+}
+
+# Apply the function to each categorical column, separated by Surgical_Tx
+categorical_tables <- lapply(categorical_cols, function(var_name) {
+  grouped_tables <- imputed_data_matched %>%
+    group_by(Surgical_Tx) %>%
+    do(get_summary_table(var_name, .))
+  
+  return(grouped_tables)
+})
+
+# Combine all data frames into a single data frame
+combined_categorical_table_imputed <- do.call(rbind, categorical_tables)
+
+
+# Write to an Excel file
+writexl::write_xlsx(combined_categorical_table_imputed, "combined_categorical_tableSep_Matched_Imputed_NEW_corrected2.xlsx")
+
+
+
+
+#tables done, now statistical tests
+
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+
+
+#statistical test for continous variables done manually using graphpad
+
+
+
+
+
+# Initialize an empty list to store the results
+results <- list()
+
+# Perform statistical tests for categorical variables
+for (var_name in categorical_cols) {
+  if (var_name %in% names(imputed_data_matched) && is.factor(imputed_data_matched[[var_name]])) {
+    # Create contingency table
+    contingency_table <- table(imputed_data_matched$Surgical_Tx, imputed_data_matched[[var_name]])
+    
+    # Perform chi-square test
+    chi_square_test <- chisq.test(contingency_table, correct = TRUE, simulate.p.value = TRUE)
+    
+    # Store the results in a data frame
+    result_df <- data.frame(
+      Variable = var_name,
+      Surgical_Tx_1_Frequency = ifelse(is.na(contingency_table[1, ]), "", contingency_table[1, ]),
+      Surgical_Tx_0_Frequency = ifelse(is.na(contingency_table[2, ]), "", contingency_table[2, ]),
+      "Chi-square Test: Chi-sq" = format(chi_square_test$statistic, digits = 2),
+      "Chi-square Test: p-value" = format(chi_square_test$p.value, digits = 4),
+      "Chi-square Test: Degrees of Freedom" = chi_square_test$parameter,
+      "Chi-square Test: Expected Frequencies" = paste(format(chi_square_test$expected, digits = 2), collapse = ", ")
+    )
+    
+    # Add the result to the list
+    results[[var_name]] <- result_df
+  }
+}
+
+# Define the expected columns
+expected_cols <- c("Variable", "Surgical_Tx_1_Frequency", "Surgical_Tx_0_Frequency", 
+                   "Chi-square Test: Chi-sq", "Chi-square Test: p-value", 
+                   "Chi-square Test: Degrees of Freedom", 
+                   "Chi-square Test: Expected Frequencies")
+
+
+# Combine the results into a single data frame
+combined_results <- do.call(rbind, results)
+
+# Print the results
+print(combined_results)
+
+
+write.xlsx(combined_results, "categorical_statistical_results_matchedimputedfixed3.xlsx", row.names = FALSE)
+
+
+
+#descriptive graphs for categorical and continuous variables ( imputed)
+
+
+#### VIOLIN PLOT
+
+# Convert 'Surgical_Tx' to factor
+imputed_data_matched$Surgical_Tx <- as.factor(imputed_data_matched$Surgical_Tx)
+
+# Load required packages
+library(ggplot2)
+library(gridExtra)  # For combining multiple ggplots
+library(forcats)
+library(dplyr)
+library(tidyr)
+
+plot_variable <- function(df, var_name, type) {
+  if (type == "continuous") {
+    p <- ggplot(df, aes(x = factor(Surgical_Tx), y = !!sym(var_name), fill = factor(Surgical_Tx))) +
+      geom_violin(alpha = 0.8) +
+      stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "red") +
+      geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+      geom_jitter(width = 0.15, size = 0.8, alpha = 0.3) +
+      scale_fill_manual(values = c("0" = "#FF69B4", "1" = "#00D2FF"), guide = guide_legend(title = "Treatment Type")) +
+      theme_minimal() +
+      labs(y = var_name) +  # Removed fill = "Surgical_Tx"
+      theme(legend.position="none", 
+            plot.title = element_text(hjust = 0.5, size=16,face="bold"), 
+            axis.text=element_text(size=10), 
+            axis.title=element_text(size=12)) +
+      ggtitle(paste(var_name)) +
+      scale_x_discrete(labels = c("0" = "Conservative Tx", "1" = "Surgical Tx"))
+    return(p)
+  } else if (type == "categorical") {
+    # Convert binary variables to percentage
+    df <- df %>%
+      group_by(Surgical_Tx) %>%
+      mutate(Percentage = sum(!!sym(var_name), na.rm = TRUE)/n()*100)
+    
+    # Draw bar plot
+    p <- ggplot(df, aes(x = factor(Surgical_Tx), y = Percentage, fill = factor(Surgical_Tx))) +
+      geom_bar(stat = "identity", position = position_dodge()) +
+      scale_fill_manual(values = c("0" = "#FF69B4", "1" = "#00D2FF"), guide = guide_legend(title = "Treatment Type")) +
+      theme_minimal() +
+      labs(y = "Percentage (%)", ) +  # Removed fill = "Surgical_Tx"
+      theme(legend.position="none", 
+            plot.title = element_text(hjust = 0.3, size =), 
+            axis.text=element_text(size=14), 
+            axis.title=element_text(size=16,face="bold")) +
+      ggtitle(paste("Bar plot of", var_name, "vs Treatment Type")) +
+      scale_x_discrete(labels = c("0" = "Conservative Tx", "1" = "Surgical Tx"))
+    return(p)
+  }
+}
+
+
+# Create an empty list to store plots
+plots <- list()
+
+# Loop over each column
+for (col in c(continuous_cols, categorical_cols)) {
+  
+  # Check if the column exists in the data
+  if (!col %in% colnames(imputed_data_matched)) {
+    print(paste("Column", col, "does not exist in the data. Skipping."))
+    next
+  }
+  
+  # Check if the column is continuous or categorical
+  if (col %in% continuous_cols) {
+    plots[[length(plots) + 1]] <- plot_variable(imputed_data_matched, col, "continuous")
+  } else if (col %in% categorical_cols) {
+    plots[[length(plots) + 1]] <- plot_variable(imputed_data_matched, col, "categorical")
+  }
+}
+
+# Combine all plots in one plot
+combined_plot <- gridExtra::grid.arrange(grobs = plots, ncol = 3)
+print(combined_plot)
+
+
+
+
+
+
+
+##### BOXPLOTS
+
+
+# Define a function to generate comparative bar plots for binary variables
+plot_binary <- function(df, var_name) {
+  
+  # Calculate the percentage in each group
+  df_percent <- df %>%
+    group_by(Surgical_Tx, !!sym(var_name)) %>%
+    summarise(n = n(), .groups = 'drop') %>%
+    mutate(freq = n / sum(n) * 100) %>%
+    filter(!!sym(var_name) == 1)  # We're interested in the cases where the variable equals 1
+  
+  # Bar plot
+  p <- ggplot(df_percent, aes(x = factor(Surgical_Tx), y = freq, fill = factor(Surgical_Tx))) +
+    geom_bar(stat = "identity", position = "dodge", width = 0.6) +
+    geom_text(aes(label = paste0(round(freq, 1),"%")), vjust = -0.5, position = position_dodge(0.6), size = 3) + # Decreased font size
+    scale_fill_manual(values = c("0" = "#fc03eb", "1" = "#03fcfc"), guide = FALSE) +  # Change the color
+    scale_y_continuous(limits = c(0, 100)) +
+    scale_x_discrete(labels = c("Conservative Tx", "Surgical Tx")) +
+    theme_classic() +
+    labs(y = "Percentage", x = "") +
+    ggtitle(paste(var_name)) +
+    theme(
+      plot.title = element_text(size = 11, face = "bold", hjust = 0.5), # Reduced to 1/2
+      axis.title = element_text(size = 9), # Reduced to 1/2
+      axis.text = element_text(size = 7.5), # Reduced to 1/2
+    )
+  
+  return(p)
+}
+
+# Get all binary variable names
+# Select variables that are binary (2 unique values) or ternary (3 unique values)
+vars_binary<- names(imputed_data_matched)[sapply(imputed_data_matched, function(x) length(unique(x)) %in% c(2, 3))]
+
+# Remove 'Department' from the list
+vars_binary <- vars_binary[!vars_binary %in% c("Surgical_Tx", "Conservative_Tx")]
+
+# Calculate the number of list elements we need
+n_lists <- ceiling(length(vars_binary) / 31)  # Adjusted for 20 plots per grid
+
+# Create a list of empty lists
+plots_list <- vector("list", n_lists)
+
+# Generate a plot for each variable and store it in the corresponding list
+for (i in seq_along(vars_binary)) {
+  list_index <- ceiling(i / 31)  # Adjusted for 20 plots per grid
+  plots_list[[list_index]][[vars_binary[i]]] <- plot_binary(imputed_data_matched, vars_binary[i])
+}
+
+# Calculate the number of rows and columns for the grid
+n_cols <- 4  # Adjusted for 4 columns
+n_rows <- 8 # Adjusted for 5 rows
+
+# Create vector for heights and widths
+heights <- rep(1, n_rows)
+widths <- rep(1, n_cols)
+
+# Arrange the plots into a grid
+for (i in seq_along(plots_list)) {
+  do.call("grid.arrange", c(plots_list[[i]], ncol = n_cols, nrow = n_rows, list(heights = heights, widths = widths)))
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#multivariate regression now - Surgery as outcome variable
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c( "Department_A", "Department_B", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterococcus",	"Tissue_diverse")
+
+
+# Multivariate logistic regression - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Surgical_Tx ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cat <- as.formula(paste("Surgical_Tx ~", paste(categorical_cols, collapse = " + ")))
+logistic_model_cat <- glm(logistic_formula_cat, data = imputed_data_matched, family = binomial(), maxit = 1000)
+logistic_model_summary_cat <- summary(logistic_model_cat)
+
+
+
+
+
+
+#without department C and lumbosacral - reference groups
+
+categorical_cols <- c("Death", "Neuro_def_at_dc", "Department_A", "Department_B",	"Relapse_yes",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_cervical_loc",
+                      	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant")
+
+
+
+
+
+
+#multivariate regression now - Death as outcome variable
+
+
+
+# Multivariate logistic regression - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", paste(categorical_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+#influence analysis
+
+# Install and load the car package
+install.packages("car")
+library(car)
+
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Surgical_Tx ~", paste(continuous_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+
+# Compute the influence measures for continuous variables
+influence_measures_cont <- influence(logistic_model_cont)
+
+# Print the influence measures for continuous variables
+print(influence_measures_cont)
+
+# Extract specific influence measures, such as Cook's distances
+cooks_d <- influence_measures_cont$infmat[, "cook.d"]
+
+# Define the formula for categorical variables
+logistic_formula_cat <- as.formula(paste("Surgical_Tx ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for categorical variables
+logistic_model_cat <- glm(logistic_formula_cat, data = imputed_data_matched, family = binomial(), maxit = 100000)
+
+# Compute the influence measures for categorical variables
+influence_measures_cat <- influence(logistic_model_cat)
+
+# Print the influence measures for categorical variables
+print(influence_measures_cat)
+
+
+
+# Print the summary of the logistic model for continuous variables
+print(summary(logistic_model_cont))
+
+# Print the influence measures for continuous variables
+print(str(influence_measures_cont))
+
+# Print the summary of the logistic model for categorical variables
+print(summary(logistic_model_cat))
+
+# Print the influence measures for categorical variables
+print(str(influence_measures_cat))
+
+
+
+#collinearity check
+
+vif(logistic_model_cont)
+vif(logistic_model_cat)
+cor(imputed_data_matched[continuous_cols])
+
+alias(logistic_model_cat)
+
+
+
+
+
+
+#regression analyses excluding high VIF variables - matched
+
+
+
+categorical_cols <- c("Death", "Relapse_yes", "Department_B",		"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_cervical_loc",
+                      "Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant")
+
+
+
+
+
+
+# Relapse - no significance
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Relapse ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial())
+
+
+summary(logistic_model_cont)
+
+
+
+
+# Death - no collinearity
+
+#Surgical_tx
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial())
+
+
+summary(logistic_model_cont)
+
+
+#Neuro_def_at_dc
+
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial())
+
+
+summary(logistic_model_cont)
+
+
+
+
+
+
+
+categorical_cols <- c("Death", "Relapse_yes", "Department_B",		"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_cervical_loc",
+                      "Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant")
+
+
+
+
+
+
+
+
+
+
+
+#for unmatched and unimputed data
+
+
+categorical_cols <- c("Death", "Neuro_def_at_dc", "Department_A", "Department_B",	"Relapse_yes",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_cervical_loc",
+                      "Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant")
+
+
+## Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Surgical_Tx ~", paste(continuous_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial(), maxit = 100000)
+
+# Compute the influence measures for continuous variables
+influence_measures_cont <- influence(logistic_model_cont)
+
+# Print the influence measures for continuous variables
+print(influence_measures_cont)
+
+# Extract specific influence measures, such as Cook's distances
+cooks_d <- influence_measures_cont$infmat[, "cook.d"]
+
+# Define the formula for categorical variables
+logistic_formula_cat <- as.formula(paste("Surgical_Tx ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for categorical variables
+logistic_model_cat <- glm(logistic_formula_cat, data = Propensity_Excel_nooutliers, family = binomial(), maxit = 100000)
+
+# Compute the influence measures for categorical variables
+influence_measures_cat <- influence(logistic_model_cat)
+
+# Print the influence measures for categorical variables
+print(influence_measures_cat)
+
+
+
+# Print the summary of the logistic model for continuous variables
+print(summary(logistic_model_cont))
+
+# Print the influence measures for continuous variables
+print(str(influence_measures_cont))
+
+# Print the summary of the logistic model for categorical variables
+print(summary(logistic_model_cat))
+
+# Print the influence measures for categorical variables
+print(str(influence_measures_cat))
+
+
+
+#collinearity check
+
+vif(logistic_model_cont)
+vif(logistic_model_cat)
+cor(Propensity_Excel_nooutliers[continuous_cols])
+
+alias(logistic_model_cat)
+
+
+
+
+#regression analyses excluding high VIF variables 
+
+categorical_cols_blueprint <- c("Death", "Neuro_def_at_dc", "Department_A", "Department_B",	"Surgical_Tx",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_cervical_loc",
+                      "Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant")
+
+
+categorical_cols<- c("Death", "Relapse_yes", "Department_B",	"Surgical_Tx",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                                "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                                "Location_lumb_loc",	"Location_thoracic_loc",
+                                "Location_thoracolumbar_loc_T11_L2",	"Location_cervical_loc",
+                                "Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant")
+
+
+# Death 
+
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial())
+
+
+summary(logistic_model_cont)
+
+
+
+#Surgical_tx
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Surgical_Tx ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial())
+
+
+summary(logistic_model_cont)
+
+# Relapse - no significance
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Relapse ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial())
+
+
+summary(logistic_model_cont)
+
+
+
+
+
+
+
+#Neuro_def_at_dc
+
+# Define the formula for continuous variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(categorical_cols, collapse = " + ")))
+
+# Fit the logistic regression model for continuous variables
+logistic_model_cont <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial())
+
+
+summary(logistic_model_cont)
+
+
+
+
+
+
+
+
+
+
+
+
+#multivariate regression now - Relapse as outcome variable
+
+
+
+# Multivariate logistic regression - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", paste(categorical_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+
+
+
+
+
+
+#can also do for neuro deficits outcomes
+
+# Multivariate logistic regression - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(categorical_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+
+
+
+### scatter plots for imputed & matched data
+
+
+
+
+######## do scatter plots for logistic regression
+
+imputed_data_matched <- read_excel("OneDrive/Spondylodiscitis Propensity/Propensity_Excel_Matched_noOutliers_Imputed_corrected.xlsx")
+
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department_A","Department_B", "Department_C", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterococcus",	"Tissue_diverse")
+
+imputed_data_matched[categorical_cols] <- lapply(imputed_data_matched[categorical_cols], as.factor)
+
+outcome_variables <- c("Death","Relapse_yes","Neuro_def_at_dc") 
+explanatory_variables <- categorical_cols
+
+
+
+
+
+# Multivariate logistic regression - Only cont variables
+logistic_formula_cont <- as.formula(paste("Death ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cont <- as.formula(paste("Death ~", paste(categorical_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+#bar plot for categorical explanatory variables regression
+
+
+plot_categorical <- function(model, data, outcome) {
+  # Create a dataframe of significant variables
+  sig_vars <- broom::tidy(model) %>% filter(p.value < 0.05)
+  
+  # Initialize an empty list to store the plots
+  plots <- list()
+  
+  # Iterate over significant variables
+  for (var_name in sig_vars$term) {
+    if (var_name != "(Intercept)") {
+      # Remove the "1" from the variable name if present
+      original_var_name <- gsub("1$", "", var_name)
+      
+      # Add predicted probabilities to the data
+      data$predicted_prob <- predict(model, type = "response")
+      
+      # Create a boxplot
+      p <- ggplot(data, aes_string(x = original_var_name, y = 'predicted_prob')) +
+        geom_boxplot(aes(fill = original_var_name)) +
+        scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+        theme_minimal(base_size = 12) +
+        labs(x = original_var_name, y = paste("Probability of", outcome), title = paste(outcome, "vs", original_var_name)) +
+        theme(
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12, face = "bold"),
+          legend.position = "none",
+          panel.grid.major = element_line(color = "grey", linetype = "dashed")
+        )
+      
+      # Append the plot to the list
+      plots[[length(plots) + 1]] <- p
+    }
+  }
+  
+  # Return the list of plots
+  return(plots)
+}
+
+  
+
+
+
+# Initialize an empty list to store all plots
+all_plots <- list()
+
+# Perform the multivariate logistic regression for each outcome variable
+for (outcome in outcome_variables) {
+  # Define the formula
+  formula <- as.formula(paste(outcome, "~", paste(categorical_cols, collapse = " + ")))
+  
+  # Run the logistic regression using completed data
+  model <- glm(formula, family = binomial, data = imputed_data_matched)
+  
+  # Generate bar plots for significant variables and append to the list of all plots
+  all_plots <- c(all_plots, plot_categorical(model, imputed_data_matched, outcome))
+}
+
+# Arrange all plots into a grid
+grid.arrange(grobs = all_plots, ncol = 3)
+
+
+
+
+#bar plot for continous explanatory variables regression
+
+
+
+plot_continuous <- function(model, data, outcome) {
+  # Create a dataframe of significant variables
+  sig_vars <- broom::tidy(model) %>% filter(p.value < 0.05)
+  
+  # Initialize an empty list to store the plots
+  plots <- list()
+  
+  # Iterate over significant variables
+  for (var_name in sig_vars$term) {
+    if (var_name != "(Intercept)") {
+      # Remove the "1" from the variable name if present
+      original_var_name <- gsub("1$", "", var_name)
+      
+      # Add predicted probabilities to the data
+      data$predicted_prob <- predict(model, type = "response")
+      
+      # Create a scatter plot with regression line
+      p <- ggplot(data, aes_string(x = original_var_name, y = 'predicted_prob')) +
+        geom_point(color = "red") +
+        geom_smooth(method = "glm", method.args = list(family = "binomial"), color = "red", se = FALSE) +
+        scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+        theme_minimal(base_size = 12) +
+        labs(x = original_var_name, y = paste("Probability of", outcome), title = paste(outcome, "vs", original_var_name)) +
+        theme(
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12, face = "bold"),
+          panel.grid.major = element_line(color = "grey", linetype = "dashed")
+        )
+      
+      # Append the plot to the list
+      plots[[length(plots) + 1]] <- p
+    }
+  }
+  
+  # Return the list of plots
+  return(plots)
+}
+
+
+
+# Initialize an empty list to store all plots
+all_plots <- list()
+
+# Perform the multivariate logistic regression for each outcome variable
+for (outcome in outcome_variables) {
+  # Define the formula
+  formula <- as.formula(paste(outcome, "~", paste(continuous_cols, collapse = " + ")))
+  
+  # Run the logistic regression using completed data
+  model <- glm(formula, family = binomial, data = imputed_data_matched)
+  
+  # Generate bar plots for significant variables and append to the list of all plots
+  all_plots <- c(all_plots, plot_continuous(model, imputed_data_matched, outcome))
+}
+
+# Arrange all plots into a grid
+grid.arrange(grobs = all_plots, ncol = 3)
+
+
+
+
+
+
+
+
+
+
+
+##### log odds to  normal odds
+
+logistic_model <- glm(formula, family = binomial, data = imputed_data_matched)
+coefs <- coef(logistic_model)
+odds <- exp(coefs)
+
+
+
+
+
+#
+
+# Univariate logistic regression - Relapse
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", "Surgical_Tx"))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Univariate logistic regression - Mortality
+logistic_formula_cont <- as.formula(paste("Death ~", "Surgical_Tx"))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+# Univariate logistic regression - Days of hospital
+logistic_formula_cont <- as.formula(paste("Days_in_hospital ~", "Surgical_Tx"))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#logistic regression on relapse using old unmatched and unimputed datasheet
+
+Propensity_Excel_nooutliers <- read_excel("OneDrive/Spondylodiscitis Propensity/CleanedData_nooutliers_GEIL.xlsx")
+
+continuous_cols <- c("CRP_admission", "WCC_admission", "Age")  # replace with your actual column names
+categorical_cols <- c("Surgical_Tx", "Department", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure",	
+                      "Location_lumb_loc",	"Location_thoracic_loc",
+                      "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                      "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                      "Tissue_propionibacteriumacnes", "Tissue_enterococcus",	"Tissue_diverse")
+
+
+
+# Find variable(s) with only one level
+for (col in categorical_cols) {
+  if (length(levels(as.factor(Propensity_Excel_nooutliers[[col]]))) <= 1) {
+    print(col)
+  }
+}
+
+# Convert continuous variables to numeric
+for (col in continuous_cols) {
+  Propensity_Excel_nooutliers[[col]] <- as.numeric(Propensity_Excel_nooutliers[[col]])
+}
+
+# Convert categorical variables to factor
+for (col in categorical_cols) {
+  Propensity_Excel_nooutliers[[col]] <- as.factor(Propensity_Excel_nooutliers[[col]])
+}
+
+
+
+# Multivariate logistic regression (SURGICAL) - Only continuous variables
+logistic_formula <- as.formula(paste("Neuro_def_at_dc ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula, data = Propensity_Excel_nooutliers, family = binomial())
+logistic_model_summary <- summary(logistic_model)
+
+
+
+# Multivariate logistic regression (SURGICAL) - categoricl  variables
+logistic_formula <- as.formula(paste("Relapse_yes ~", paste(c(categorical_cols), collapse = " + ")))
+logistic_model <- glm(logistic_formula, data = Propensity_Excel_nooutliers, family = binomial())
+logistic_model_summary <- summary(logistic_model)
+
+                             
+
+
+
+
+# Multivariate logistic regression (DEATH) - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Death ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial())
+logistic_model_summary <- summary(logistic_model)
+
+
+# Multivariate logistic regression (DEATH) - Only categorical variables - split for paper because of collinearity
+logistic_formula_cont <- as.formula(paste("Death ~", paste(categorical_cols_red1, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial(),  maxit = 100000000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+categorical_cols_red1 <- c("Surgical_Tx", "Department_A","Department_B", "Department_C", "Death", "Relapse_yes",	"Neuro_def_at_dc",	"Female",	"Epidural",	"Paravertebral",	"Neuro_deficit",	"SIRS",	"cRF",	"Diabetes", 	"IV_druguse",
+                      "Immunosuppression",	"Malignoma",	"Liver_failure"	
+                      )
+
+
+categorical_cols_red1 <- c("Location_thoracic_loc",
+                           "Location_thoracolumbar_loc_T11_L2",	"Location_multiple_loc",	"Location_cervical_loc",
+                           "Location_lumbosac_loc",	"Tissue_escherichiacoli",	"Tissue_staphylococcus",	"Tissue_multiresistant",	"Tissue_streptococcus",
+                           "Tissue_propionibacteriumacnes", "Tissue_enterococcus",	"Tissue_diverse")
+
+
+#multivariate regression now - Relapse as outcome variable
+
+
+
+# Multivariate logistic regression - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", paste(categorical_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+
+
+#can also do for neuro deficits outcomes
+
+# Multivariate logistic regression - Only continuous variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(continuous_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Multivariate logistic regression - Only categorical variables
+logistic_formula_cont <- as.formula(paste("Neuro_def_at_dc ~", paste(categorical_cols, collapse = " + ")))
+logistic_model <- glm(logistic_formula_cont, data = Propensity_Excel_nooutliers, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###################################
+# Univariate logistic regression - Relapse
+logistic_formula_cont <- as.formula(paste("Relapse_yes ~", "Surgical_Tx"))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+# Univariate logistic regression - Mortality
+logistic_formula_cont <- as.formula(paste("Death ~", "Surgical_Tx"))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
+
+
+# Univariate logistic regression - Days of hospital
+logistic_formula_cont <- as.formula(paste("Days_in_hospital ~", "Surgical_Tx"))
+logistic_model <- glm(logistic_formula_cont, data = imputed_data_matched, family = binomial(), maxit = 100000)
+logistic_model_summary <- summary(logistic_model)
+
